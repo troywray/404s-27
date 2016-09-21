@@ -58,13 +58,13 @@ class URLMapper( ):
         # process 404s first
         for i, url in enumerate( self.csv_404s ):
 
-            if i < self.limit:
+            if i < self.limit * 1000:
 
                 text = self.url2text( url )
 
                 if len( text ) > 0:
-                    urls.add( url )
-                    texts.add( url )
+                    urls.add( text )
+                    texts.add( text )
                 else:
                     self.no_match.add( url )
 
@@ -74,13 +74,13 @@ class URLMapper( ):
             if url.find( self.exclude ) > 0:
                 continue
 
-            if i < self.limit:
+            if i < self.limit * 1000:
 
                 text = self.url2text( url )
 
                 if len( text ) > 0:
-                    urls.add( url )
-                    texts.add( url )
+                    urls.add( text )
+                    texts.add( text )
                 else:
                     self.no_match.add( url )
 
@@ -91,7 +91,8 @@ class URLMapper( ):
         for i, url in enumerate( self.csv_404s ):
             if i < self.limit:
                 try:
-                    similar = self.get_similar( url )
+                    text = self.url2text(url)
+                    similar = self.get_similar( text )
 
                     if similar[1] > self.threshold:
                         url_map[ url ] = similar
