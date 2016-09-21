@@ -264,26 +264,50 @@ import re
 from collections import defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 
+import random
 
 class URLMapper( ):
     def __init__( self, csv_404s, csv_crawl, exclude, limit, threshold ):
         df = pd.read_csv( csv_404s )
         self.csv_404s = set( df[ "URL" ] )
         self.csv_crawl = pd.read_csv( csv_crawl, skiprows = 1 )
+        self.csv_internal = pd.read_csv( 'data/lehmans_internal_html.csv', skiprows = 1 )
         self.exclude = exclude
         self.limit = limit
         self.threshold = threshold
         self.no_match = set( )
         self.urlpairs = None
+        self.word_frequency_table = {}
+
+    def randomWord(self):
+        WORDS = ("apple", "orange", "banana", "kiwi", "plum", "blackberry", "cherry", "melon", "grape", "pear")
+        word = random.choice( WORDS )
+        return word
+
+    def addToWordFrequencyTable(self, phrase):
+        words = phrase.split()
+        for word in words:
+            if not word in self.word_frequency_table:
+                self.word_frequency_table[word] = 1
+            else:
+                self.word_frequency_table[word] += 1
 
     def url2text( self, url ):
         u = urlparse( url ).path
         u = re.sub( "\..+", "", u )
         u = re.split( r"/|-|_", u )
 
-        # eliminate single characters and digits
-        t = [ x for x in u if len( x ) > 1 and re.match( r"^\d+$", x ) is None ]
-        u = " ".join( t )
+        # eliminate single characters and digits @todo
+        t1 = [ x for x in u if len( x ) > 2 and re.match( r"^\d+$", x ) is None ]
+        t2 = [ x for x in u if len( x ) > 2 and re.match( r"^\d+$", x ) is None ]
+        # t = [ x for x in u if len( x ) > 4 ]
+        u = " ".join( t1 )
+        # u = u.replace('product', self.randomWord())
+        # u = u.replace('book', self.randomWord())
+        # u = u.replace('green', self.randomWord())
+        # u = u.replace('dietz', 'dietz dietz dietz')
+        # u = u.replace('green', 'green green green green')
+        self.addToWordFrequencyTable(u)
         return u
         # print re.sub("\..+", "", u)
 
@@ -293,26 +317,32 @@ class URLMapper( ):
         # no need to normalize, since Vectorizer will return normalized tf-idf
         pairwise = tfidf * tfidf.T
 
-        self.urlpairs = pd.DataFrame( pairwise.A, index = urls, columns = urls )
+        self.urlpairs = pd.DataFrame( pairwise.A, index = urls, columns = texts )
 
-    def get_similar( self, url ):
+    def get_similar( self, url, texts_404, texts_crawl ):
 
         similar = None
         highest_value = 0
 
         for i, value in self.urlpairs[ url ].iteritems( ):
-            if i != url and value > highest_value:
-                similar = i
-                highest_value = value
+            if i not in self.csv_404s:
+                if value > 10.05:
+                    print url, "---", i, value
+                if i in texts_crawl and value > highest_value:
+                    similar = i
+                    highest_value = value
+                    # print url, "***", i, value
 
-                print url, i, value
-
+        print url, '***', similar, highest_value
         return similar
 
     def urlmatch( self ):
 
         urls = set( )
         texts = set( )
+        texts_404 = set()
+        texts_crawl = set()
+
         url_map = defaultdict( list )
 
         # process 404s first
@@ -323,8 +353,10 @@ class URLMapper( ):
                 text = self.url2text( url )
 
                 if len( text ) > 0:
-                    urls.add( url )
-                    texts.add( url )
+                    urls.add( text )
+                    texts.add( text )
+                    texts_404.add(text)
+                    pass
                 else:
                     self.no_match.add( url )
 
@@ -339,23 +371,52 @@ class URLMapper( ):
                 text = self.url2text( url )
 
                 if len( text ) > 0:
-                    urls.add( url )
-                    texts.add( url )
+                    if text.lower().find('wick') != -1 and text.lower().find('wick') != -1:
+                        print "Adding ", text
+                    urls.add( text )
+                    texts.add( text )
+                    texts_crawl.add(text)
                 else:
                     self.no_match.add( url )
 
+        if False:
+            # process lehmans_internal_html.csv
+            for i, url in enumerate( self.csv_internal[ "Address" ] ):
+
+                if url.find( self.exclude ) > 0:
+                    continue
+
+                if i < self.limit:
+
+                    text = self.url2text( url )
+
+                    if len( text ) > 0:
+                        urls.add( text )
+                        texts.add( text )
+                        texts_crawl.add(text)
+                    else:
+                        self.no_match.add( url )
+
         # initialize pairwise similarity matrix
         self.pairwise_similarity( urls, texts )
+        # sorted_word_frequency = sorted(self.word_frequency_table.items(), key=lambda x: (-x[1], x[0]))
+        # sorted_words = sorted(self.word_frequency_table.items())
 
         # iterate urls to get similar
         for url in self.csv_404s:
-            similar = self.get_similar( url )
-
-            if len( similar ) > self.threshold:
-                url_map[ url ] = similar
-                # print url, similar
-            else:
-                self.no_match.add( url )
+        # for url in ['flat wick pack for oil lamps', ]:
+            text = self.url2text( url )
+            similar = None
+            try:
+                similar = self.get_similar( text, texts_404, texts_crawl )
+            except:
+                pass
+            if similar is not None:
+                if len( similar ) > self.threshold:
+                    url_map[ url ] = similar
+                    # print url, similar
+                else:
+                    self.no_match.add( url )
 
         return url_map
 
@@ -374,7 +435,7 @@ parser = argparse.ArgumentParser( description = "map 404 urls" )
 parser.add_argument( '-u', '--urlmatch', action = 'store_true', help = 'match using urls' )
 parser.add_argument( '-e', '--h1match', action = 'store_true', help = 'match using h1s' )
 parser.add_argument( '-t', '--titlematch', action = 'store_true', help = 'match using titles' )
-parser.add_argument( '-l', '--limit', type = int, default = 100, help = 'process maximun urls' )
+parser.add_argument( '-l', '--limit', type = int, default = 10000, help = 'process maximun urls' )
 parser.add_argument( '-o', '--threshold', type = int, default = 0.1, help = 'minimum similarity score' )
 parser.add_argument( '-x', '--exclude', type = str, help = 'exclude urls with this pattern' )
 parser.add_argument( "csv_404s", help = "csv file with 404s" )
@@ -386,11 +447,8 @@ args = parser.parse_args( [ "-u", "-x", "returnurl", "data/lehmans-404s.csv", "d
 urlmapper = URLMapper( args.csv_404s, args.csv_crawl, args.exclude, args.limit, args.threshold )
 
 if args.urlmatch:
-    try:
-        url_map = urlmapper.urlmatch( )
-        pass
-    except:
-        pass
+    url_map = urlmapper.urlmatch( )
+    pass
 if args.h1match:
     url_map = urlmapper.h1match( )
 if args.titlematch:
