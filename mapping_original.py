@@ -17,6 +17,8 @@ class URLMapper( ):
         self.threshold = threshold
         self.no_match = set( )
         self.urlpairs = None
+        self.text_url_map = {}
+        self.csv_404s_meta = {}
 
     def url2text( self, url ):
         u = urlparse( url ).path
@@ -34,11 +36,18 @@ class URLMapper( ):
         tfidf = TfidfVectorizer( ).fit_transform( texts )
         # no need to normalize, since Vectorizer will return normalized tf-idf
         pairwise = tfidf * tfidf.T
+        # print pairwise
+        # print pairwise.A
+        self.urlpairs = pd.DataFrame( pairwise.A, index = urls, columns = texts )
 
-        self.urlpairs = pd.DataFrame( pairwise.A, index = urls, columns = urls )
-
-    def get_similar( self, url, texts_404, texts_crawl ):
-
+    def get_similar( self, url, urls_crawl, texts_crawl ):
+        """
+        scans all url pairs and finds the highest score that's also in texts_crawl
+        :param url:         The tokenized text to search for
+        :param urls_crawl:  valid urls
+        :param texts_crawl: tokenized texts of valid urls
+        :return:            match and score
+        """
         similar = None
         highest_value = 0
 
@@ -47,14 +56,14 @@ class URLMapper( ):
                 similar = i
                 highest_value = value
 
-                # print url, i, value
-
         return [similar, highest_value]
 
     def urlmatch( self ):
 
         urls = set( )
         texts = set( )
+        urls_404 = set()
+        urls_crawl = set()
         texts_404 = set()
         texts_crawl = set()
 
@@ -64,12 +73,14 @@ class URLMapper( ):
         for i, url in enumerate( self.csv_404s ):
 
             if i < self.limit * 1000:
+                path = urlparse(url).path
 
-                text = self.url2text( url )
-
+                text = self.url2text( path )
+                self.csv_404s_meta[path] = [text, '', '', 0, False]  # tokens, matched tokens, url, score, matched
                 if len( text ) > 0:
                     urls.add( text )
                     texts.add( text )
+                    urls_404.add(path)
                     texts_404.add(text)
                     pass
                 else:
@@ -80,37 +91,52 @@ class URLMapper( ):
 
             if url.find( self.exclude ) > 0:
                 continue
+            path = urlparse(url).path
+            text = self.url2text(path)
 
-            if i < self.limit * 1000:
-
-                text = self.url2text( url )
-
-                if len( text ) > 0:
-                    urls.add( text )
-                    texts.add( text )
-                    texts_crawl.add(text)
-                else:
-                    self.no_match.add( url )
+            if len( text ) > 0:
+                urls.add( text )
+                texts.add( text )
+                urls_crawl.add(path)
+                texts_crawl.add(text)
+                if self.text_url_map.has_key(text):
+                    if False:
+                        print "duplicate text from crawl: "
+                        print "text was: ", text
+                        print "this url: ", url
+                        print "previous url: ", self.text_url_map[text]
+                        # exit(1)
+                self.text_url_map[text] = path
+            else:
+                self.no_match.add( path )
 
         # initialize pairwise similarity matrix
         self.pairwise_similarity( urls, texts )
 
         # iterate urls to get similar
-        for i, url in enumerate( self.csv_404s ):
+        for i, url in enumerate( self.csv_404s_meta ):
+            path = url
             if i < self.limit:
                 similar = None
+                text = self.url2text(path)
+                similar = None
                 try:
-                    text = self.url2text(url)
-                    similar = self.get_similar( text, texts_404, texts_crawl )
-                    if similar is not None:
-                        if similar[1] > self.threshold:
-                            url_map[ url ] = similar
-                            # print url, similar
-                        else:
-                            self.no_match.add( url )
+                    similar = self.get_similar( text, urls_crawl, texts_crawl )
                 except:
-                    # print url, ' failed'
                     pass
+                if similar is not None:
+                    if True or similar[1] > self.threshold:
+                        url_map[ path ] = similar
+                        # print url, similar
+                        match_url = ''
+                        try:
+                            match_url = self.text_url_map[ similar[ 0 ] ]
+                        except:
+                            pass
+                        surl = [text, similar[0], similar[1], match_url, True]
+                        self.csv_404s_meta[path] = surl
+                    else:
+                        self.no_match.add( url )
 
         return url_map
 
@@ -142,11 +168,9 @@ urlmapper = URLMapper( args.csv_404s, args.csv_crawl, args.exclude, args.limit, 
 
 url_map = []
 if args.urlmatch:
-    try:
-        url_map = urlmapper.urlmatch( )
-        pass
-    except:
-        pass
+    url_map = urlmapper.urlmatch( )
+    pass
+    pass
 if args.h1match:
     url_map = urlmapper.h1match( )
 if args.titlematch:
@@ -167,3 +191,12 @@ print numpy.histogram(scores, 10, (0, 1))
 print "Matches: ", len(matches)
 print "Non-Matches: ", len(non_matches)
 
+# print urlmapper.urlpairs
+
+for m in matches:
+    print m, urlmapper.text_url_map[m]
+
+
+
+for key, entry in urlmapper.csv_404s_meta.items():
+    print key, ", ", entry[0], ", ", entry[1], ", ", entry[2], ", ", entry[3], ", ", entry[4]
