@@ -10,6 +10,8 @@ class URLMapper( ):
         df = pd.read_csv( csv_404s )
         self.csv_404s = set( df[ "URL" ] )
         self.csv_crawl = pd.read_csv( csv_crawl, skiprows = 1 )
+        self.texts_404 = set()
+        self.texts_crawl = set()
         self.exclude = exclude
         self.limit = limit
         self.threshold = threshold
@@ -35,13 +37,13 @@ class URLMapper( ):
 
         self.urlpairs = pd.DataFrame( pairwise.A, index = urls, columns = urls )
 
-    def get_similar( self, url ):
+    def get_similar( self, url, texts_404, texts_crawl ):
 
         similar = None
         highest_value = 0
 
         for i, value in self.urlpairs[ url ].iteritems( ):
-            if i != url and value > highest_value:
+            if i in texts_crawl and value > highest_value:
                 similar = i
                 highest_value = value
 
@@ -53,6 +55,9 @@ class URLMapper( ):
 
         urls = set( )
         texts = set( )
+        texts_404 = set()
+        texts_crawl = set()
+
         url_map = defaultdict( list )
 
         # process 404s first
@@ -65,6 +70,8 @@ class URLMapper( ):
                 if len( text ) > 0:
                     urls.add( text )
                     texts.add( text )
+                    texts_404.add(text)
+                    pass
                 else:
                     self.no_match.add( url )
 
@@ -81,6 +88,7 @@ class URLMapper( ):
                 if len( text ) > 0:
                     urls.add( text )
                     texts.add( text )
+                    texts_crawl.add(text)
                 else:
                     self.no_match.add( url )
 
@@ -90,15 +98,16 @@ class URLMapper( ):
         # iterate urls to get similar
         for i, url in enumerate( self.csv_404s ):
             if i < self.limit:
+                similar = None
                 try:
                     text = self.url2text(url)
-                    similar = self.get_similar( text )
-
-                    if similar[1] > self.threshold:
-                        url_map[ url ] = similar
-                        # print url, similar
-                    else:
-                        self.no_match.add( url )
+                    similar = self.get_similar( text, texts_404, texts_crawl )
+                    if similar is not None:
+                        if similar[1] > self.threshold:
+                            url_map[ url ] = similar
+                            # print url, similar
+                        else:
+                            self.no_match.add( url )
                 except:
                     # print url, ' failed'
                     pass
@@ -120,14 +129,14 @@ parser = argparse.ArgumentParser( description = "map 404 urls" )
 parser.add_argument( '-u', '--urlmatch', action = 'store_true', help = 'match using urls' )
 parser.add_argument( '-e', '--h1match', action = 'store_true', help = 'match using h1s' )
 parser.add_argument( '-t', '--titlematch', action = 'store_true', help = 'match using titles' )
-parser.add_argument( '-l', '--limit', type = int, default = 100, help = 'process maximun urls' )
+parser.add_argument( '-l', '--limit', type = int, default = 10000, help = 'process maximun urls' )
 parser.add_argument( '-o', '--threshold', type = int, default = 0.1, help = 'minimum similarity score' )
 parser.add_argument( '-x', '--exclude', type = str, help = 'exclude urls with this pattern' )
 parser.add_argument( "csv_404s", help = "csv file with 404s" )
 parser.add_argument( "csv_crawl", help = "csv file with website crawl" )
 
 # test arguments
-args = parser.parse_args( [ "-u", "-x", "returnurl", "data/lehmans-404s.csv", "data/response_codes_success_(2xx).csv" ] )
+args = parser.parse_args( [ "-u", "-x", "returnurl", "data/404s-all.csv", "data/response_codes_success_(2xx).csv" ] )
 
 urlmapper = URLMapper( args.csv_404s, args.csv_crawl, args.exclude, args.limit, args.threshold )
 
@@ -144,7 +153,17 @@ if args.titlematch:
     url_map = urlmapper.titlematch( )
 
 scores = []
+matches = []
+non_matches = []
 for index, value in url_map.items():
     scores.append(value[1])
+    if value[1] > 0.3:
+        matches.append(value[0])
+    else:
+        non_matches.append(value[0])
 
 print numpy.histogram(scores, 10, (0, 1))
+
+print "Matches: ", len(matches)
+print "Non-Matches: ", len(non_matches)
+
