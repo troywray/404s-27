@@ -5,20 +5,24 @@ from collections import defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as numpy
 
-class URLMapper( ):
-    def __init__( self, csv_404s, csv_crawl, exclude, limit, threshold ):
-        df = pd.read_csv( csv_404s )
+class URLMapper():
+    def __init__(self, project, master_map, latest_crawl, latest_404s):
+        df = pd.read_csv( "data/" + project + "/" + latest_404s )
         self.csv_404s = set( df[ "URL" ] )
-        self.csv_crawl = pd.read_csv( csv_crawl, skiprows = 1 )
+        self.csv_crawl = pd.read_csv( "data/" + project + "/" + latest_crawl, skiprows = 1 )
+        self.master_map = pd.read_csv( "data/" + project + "/" + master_map )
+        self.match = ''
+        self.force = ''
         self.texts_404 = set()
         self.texts_crawl = set()
-        self.exclude = exclude
-        self.limit = limit
-        self.threshold = threshold
+        self.exclude = []
+        self.limit = 10000
+        self.threshold = 0.2
         self.no_match = set( )
         self.urlpairs = None
         self.text_url_map = {}
         self.csv_404s_meta = {}
+
 
     def url2text( self, url ):
         u = urlparse( url ).path
@@ -71,6 +75,10 @@ class URLMapper( ):
 
         # process 404s first
         for i, url in enumerate( self.csv_404s ):
+            # only deal with match urls
+            if self.match != '':
+                if url.find(self.match) == -1:
+                    continue
 
             if i < self.limit * 1000:
                 path = urlparse(url).path
@@ -85,15 +93,21 @@ class URLMapper( ):
                     pass
                 else:
                     self.no_match.add( url )
-
+        print len(urls_404), " 404s added"
         # process crawled urls
         for i, url in enumerate( self.csv_crawl[ "Address" ] ):
+            # ignore any specified urls
+            for exclude in self.exclude:
+                if url.find( exclude ) > 0:
+                    continue
+            # ignore urls unless they include force string
+            if self.force != '':
+                if url.find(self.force) == -1:
+                    continue
 
-            if url.find( self.exclude ) > 0:
-                continue
             path = urlparse(url).path
             if path.find('/product/') != -1:
-                s = path.split('/');
+                s = path.split('/')
                 if len(s) > 1:
                     s = s[0:len(s)-1]
                 path = "/".join(s)
@@ -156,6 +170,8 @@ class URLMapper( ):
 
 import argparse
 import sys
+import ConfigParser
+import json
 
 parser = argparse.ArgumentParser( description = "map 404 urls" )
 parser.add_argument( '-u', '--urlmatch', action = 'store_true', help = 'match using urls' )
@@ -163,14 +179,69 @@ parser.add_argument( '-e', '--h1match', action = 'store_true', help = 'match usi
 parser.add_argument( '-t', '--titlematch', action = 'store_true', help = 'match using titles' )
 parser.add_argument( '-l', '--limit', type = int, default = 10000, help = 'process maximun urls' )
 parser.add_argument( '-o', '--threshold', type = int, default = 0.1, help = 'minimum similarity score' )
-parser.add_argument( '-x', '--exclude', type = str, help = 'exclude urls with this pattern' )
+# parser.add_argument( '-x', '--exclude', type = str, help = 'exclude urls with this pattern' )
+parser.add_argument( '-p', '--project', type = str, help = 'match using h1s' )
+parser.add_argument( "master_map", help = "master map" )
 parser.add_argument( "csv_404s", help = "csv file with 404s" )
 parser.add_argument( "csv_crawl", help = "csv file with website crawl" )
 
-# test arguments
-args = parser.parse_args( [ "-u", "-x", "returnurl", "data/404s-all.csv", "data/response_codes_success_(2xx).csv" ] )
 
-urlmapper = URLMapper( args.csv_404s, args.csv_crawl, args.exclude, args.limit, args.threshold )
+# test arguments
+args = parser.parse_args( [ "-u", "-p", "lehmans", "master_map.csv", "latest_404s.csv", "response_codes_success_(2xx).csv" ] )
+
+project = args.project
+Config = ConfigParser.ConfigParser()
+Config.read('data/' + project + '/config.ini')
+
+force_match = json.loads(Config.get('force_patterns', 'match'))
+force = json.loads(Config.get('force_patterns', 'force'))
+
+for i, match in enumerate(force_match):
+    print "processing ", match
+    urlmapper = URLMapper( project, args.master_map, args.csv_crawl, args.csv_404s )
+
+    exclude = json.loads( Config.get( '404s', 'exclude' ) )
+    urlmapper.exclude = exclude
+
+    urlmapper.match = match
+    urlmapper.force = force[i]
+
+    url_map = urlmapper.urlmatch()
+
+    scores = [ ]
+    matches = [ ]
+    non_matches = [ ]
+    for index, value in url_map.items( ):
+        scores.append( value[ 1 ] )
+        if value[ 1 ] > 0.3:
+            matches.append( value[ 0 ] )
+        else:
+            non_matches.append( value[ 0 ] )
+
+    print numpy.histogram( scores, 10, (0, 1) )
+
+    print "Matches: ", len( matches )
+    print "Non-Matches: ", len( non_matches )
+
+    output = ''
+    for key, entry in urlmapper.csv_404s_meta.items():
+        # print key, ", ", str(entry[0]), ", ", str(entry[1]), ", ", str(entry[2]), ", ", str(entry[3]), ", ", str(entry[4])
+        output += str(key) + ", " + str(entry[0]) + ", " + str(entry[1]) + ", " + str(entry[2]) + ", " + str(entry[3]) + ", " + str(entry[4]) + "\r"
+
+    filename = "data/" + project + "/new_mappings." + match.replace('/', '__') + ".csv"
+
+    handle = open(filename, "w")
+    handle.write(output)
+    handle.close()
+    print
+    # df = pd.DataFrame.from_dict( urlmapper.csv_404s_meta.items() )
+    # df.to_csv( filename )
+
+exit()
+
+
+
+
 
 url_map = []
 if args.urlmatch:
@@ -182,20 +253,6 @@ if args.h1match:
 if args.titlematch:
     url_map = urlmapper.titlematch( )
 
-scores = []
-matches = []
-non_matches = []
-for index, value in url_map.items():
-    scores.append(value[1])
-    if value[1] > 0.3:
-        matches.append(value[0])
-    else:
-        non_matches.append(value[0])
-
-print numpy.histogram(scores, 10, (0, 1))
-
-print "Matches: ", len(matches)
-print "Non-Matches: ", len(non_matches)
 
 # print urlmapper.urlpairs
 
