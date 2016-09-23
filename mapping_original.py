@@ -94,12 +94,14 @@ class URLMapper():
                 else:
                     self.no_match.add( url )
         print len(urls_404), " 404s added"
+
         # process crawled urls
         for i, url in enumerate( self.csv_crawl[ "Address" ] ):
             # ignore any specified urls
             for exclude in self.exclude:
                 if url.find( exclude ) > 0:
                     continue
+
             # ignore urls unless they include force string
             if self.force != '':
                 if url.find(self.force) == -1:
@@ -130,6 +132,7 @@ class URLMapper():
             else:
                 self.no_match.add( path )
 
+        print len(urls_crawl), " crawled urls added"
         # initialize pairwise similarity matrix
         self.pairwise_similarity( urls, texts )
 
