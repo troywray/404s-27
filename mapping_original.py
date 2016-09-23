@@ -92,6 +92,12 @@ class URLMapper( ):
             if url.find( self.exclude ) > 0:
                 continue
             path = urlparse(url).path
+            if path.find('/product/') != -1:
+                s = path.split('/');
+                if len(s) > 1:
+                    s = s[0:len(s)-1]
+                path = "/".join(s)
+
             text = self.url2text(path)
 
             if len( text ) > 0:
